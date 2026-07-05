@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deepfake Image Detector</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+
+  /* ---------- 1. RESET & BASE ---------- */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg-deep:      #0B1220;
+    --panel:        #121B2E;
+    --panel-edge:   #223049;
+    --accent-scan:  #4CE0B3;
+    --accent-alert: #FF5D5D;
+    --text-primary: #E8EDF4;
+    --text-muted:   #7C8AA0;
+  }
+
+  body {
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  /* ---------- 2. PAGE LAYOUT ---------- */
+  .page { width: 100%; max-width: 480px; }
+
+  header { text-align: center; margin-bottom: 28px; }
+
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    color: var(--accent-scan);
+    text-transform: uppercase;
+  }
+
+  h1 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 28px;
+    margin-top: 6px;
+  }
+
+  .subtitle {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin-top: 8px;
+    line-height: 1.5;
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: 12px;
+    padding: 24px;
+  }
+
+  /* ---------- 3. UPLOAD ZONE (with bounding-box corners) ---------- */
+  .upload-zone {
+    position: relative;
+    height: 260px;
+    border-radius: 8px;
+    background: #0E1626;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    overflow: hidden;
+  }
+
+  /* the four corner brackets, styled like an AI bounding box */
+  .corner {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    border: 2px solid var(--accent-scan);
+    opacity: 0.6;
+    transition: opacity 0.2s ease;
+  }
+  .corner.tl { top: 10px; left: 10px; border-right: none; border-bottom: none; }
+  .corner.tr { top: 10px; right: 10px; border-left: none; border-bottom: none; }
+  .corner.bl { bottom: 10px; left: 10px; border-right: none; border-top: none; }
+  .corner.br { bottom: 10px; right: 10px; border-left: none; border-top: none; }
+
+  .upload-zone:hover .corner { opacity: 1; }
+
+  .upload-prompt {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 14px;
+    padding: 0 30px;
+  }
+
+  .upload-prompt strong { color: var(--text-primary); display: block; margin-bottom: 4px; }
+
+  .preview {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  /* the animated line that sweeps down during "analysis" */
+  .scan-line {
+    position: absolute;
+    left: 0; right: 0;
+    height: 2px;
+    background: var(--accent-scan);
+    box-shadow: 0 0 12px var(--accent-scan);
+    top: 0;
+    display: none;
+  }
+  .scan-line.active {
+    display: block;
+    animation: sweep 1.4s linear infinite;
+  }
+  @keyframes sweep {
+    0%   { top: 0%; }
+    100% { top: 100%; }
+  }
+
+  /* ---------- 4. BUTTON ---------- */
+  button#analyzeBtn {
+    width: 100%;
+    margin-top: 18px;
+    padding: 13px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent-scan);
+    color: #06231A;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+  }
+  button#analyzeBtn:disabled {
+    background: var(--panel-edge);
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+
+  /* ---------- 5. RESULT PANEL ---------- */
+  .result { margin-top: 20px; }
+
+  .result-label {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 20px;
+    margin-bottom: 10px;
+  }
+  .result-label.real  { color: var(--accent-scan); }
+  .result-label.fake  { color: var(--accent-alert); }
+
+  .confidence-bar {
+    height: 8px;
+    background: var(--panel-edge);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .confidence-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent-scan);
+    transition: width 0.6s ease;
+  }
+  .confidence-fill.fake { background: var(--accent-alert); }
+
+  .confidence-text {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 6px;
+  }
+
+</style>
+</head>
+<body>
+
+  <div class="page">
+
+    <header>
+      <div class="eyebrow">Forensic Scan</div>
+      <h1>Deepfake Detector</h1>
+      <p class="subtitle">Upload an image and the model will classify it as Real or AI-Generated.</p>
+    </header>
+
+    <div class="panel">
+
+      <div class="upload-zone" id="dropZone">
+        <span class="corner tl"></span>
+        <span class="corner tr"></span>
+        <span class="corner bl"></span>
+        <span class="corner br"></span>
+
+        <div class="upload-prompt" id="uploadPrompt">
+          <strong>Click or drop an image here</strong>
+          JPG or PNG, up to 10MB
+        </div>
+
+        <img id="preview" class="preview" hidden alt="Uploaded preview">
+        <div class="scan-line" id="scanLine"></div>
+
+        <input type="file" id="fileInput" accept="image/*" hidden>
+      </div>
+
+      <button id="analyzeBtn" disabled>Analyze Image</button>
+
+      <div class="result" id="result" hidden>
+        <div class="result-label" id="resultLabel">—</div>
+        <div class="confidence-bar">
+          <div class="confidence-fill" id="confidenceFill"></div>
+        </div>
+        <div class="confidence-text" id="confidenceText">—</div>
+      </div>
+
+    </div>
+  </div>
+
+<script>
+
+  // =========================================================
+  // CONFIG — point this at your own backend once it's ready
+  // =========================================================
+  const API_URL = "http://localhost:5000/predict"; // <-- change this
+const USE_MOCK_API = false;
+  // ---------- 1. GRAB REFERENCES TO THE HTML ELEMENTS ----------
+  const dropZone      = document.getElementById("dropZone");
+  const fileInput     = document.getElementById("fileInput");
+  const uploadPrompt  = document.getElementById("uploadPrompt");
+  const preview       = document.getElementById("preview");
+  const scanLine      = document.getElementById("scanLine");
+  const analyzeBtn    = document.getElementById("analyzeBtn");
+  const result        = document.getElementById("result");
+  const resultLabel   = document.getElementById("resultLabel");
+  const confidenceFill = document.getElementById("confidenceFill");
+  const confidenceText = document.getElementById("confidenceText");
+
+  let selectedFile = null;
+
+  // ---------- 2. LET USER PICK A FILE ----------
+
+  // clicking the box opens the file picker
+  dropZone.addEventListener("click", () => fileInput.click());
+
+  // dragging a file over the box
+  dropZone.addEventListener("dragover", (e) => {
+    e.preventDefault(); // stops the browser from opening the file itself
+  });
+
+  // dropping a file onto the box
+  dropZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length > 0) {
+      handleFile(e.dataTransfer.files[0]);
+    }
+  });
+
+  // picking a file via the normal file dialog
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files.length > 0) {
+      handleFile(fileInput.files[0]);
+    }
+  });
+
+  function handleFile(file) {
+    if (!file.type.startsWith("image/")) {
+      alert("Please upload an image file.");
+      return;
+    }
+    selectedFile = file;
+
+    // show the picture inside the upload box
+    preview.src = URL.createObjectURL(file);
+    preview.hidden = false;
+    uploadPrompt.hidden = true;
+
+    // reset any previous result
+    result.hidden = true;
+    analyzeBtn.disabled = false;
+  }
+
+  // ---------- 3. RUN THE ANALYSIS ----------
+
+  analyzeBtn.addEventListener("click", async () => {
+    if (!selectedFile) return;
+
+    analyzeBtn.disabled = true;
+    analyzeBtn.textContent = "Analyzing...";
+    scanLine.classList.add("active");
+    result.hidden = true;
+
+    try {
+      const data = USE_MOCK_API
+        ? await mockPredict()
+        : await callRealApi(selectedFile);
+
+      showResult(data);
+    } catch (err) {
+      alert("Something went wrong talking to the model: " + err.message);
+    } finally {
+      analyzeBtn.disabled = false;
+      analyzeBtn.textContent = "Analyze Image";
+      scanLine.classList.remove("active");
+    }
+  });
+
+  // Sends the image to YOUR backend and expects back something like:
+  // { "label": "fake", "confidence": 0.92 }
+  async function callRealApi(file) {
+    const formData = new FormData();
+    formData.append("image", file);
+
+    const response = await fetch(API_URL, {
+      method: "POST",
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error("Server responded with status " + response.status);
+    }
+    return await response.json();
+  }
+
+  // Fake response so you can test the interface before your backend is wired up.
+  function mockPredict() {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const isFake = Math.random() > 0.5;
+        resolve({
+          label: isFake ? "fake" : "real",
+          confidence: 0.7 + Math.random() * 0.29
+        });
+      }, 1500); // pretend the model takes 1.5s
+    });
+  }
+
+  // ---------- 4. DISPLAY THE RESULT ----------
+  function showResult(data) {
+    const isFake = data.label.toLowerCase() === "fake";
+    const percent = Math.round(data.confidence * 100);
+
+    resultLabel.textContent = isFake ? "⚠ AI-Generated (Fake)" : "✓ Real Image";
+    resultLabel.className = "result-label " + (isFake ? "fake" : "real");
+
+    confidenceFill.style.width = percent + "%";
+    confidenceFill.className = "confidence-fill " + (isFake ? "fake" : "");
+
+    confidenceText.textContent = "Confidence: " + percent + "%";
+
+    result.hidden = false;
+  }
+
+</script>
+</body>
+</html>
